@@ -322,6 +322,7 @@ app.post("/api/packs", async (req, res, next) => {
             flavor: String(card.flavor ?? ""),
             cardNo: String(card.cardNo ?? ""),
             creator: String(card.creator ?? ""),
+            packId: String(card.packId ?? ""),
             twitter: String(card.twitter ?? ""),
             twitterUrl: card.twitter ? `https://x.com/${String(card.twitter)}` : ""
         }));
@@ -335,14 +336,64 @@ app.post("/api/packs", async (req, res, next) => {
             return;
         }
         const packName = typeof req.body?.packName === "string" ? req.body.packName.slice(0, 120) : undefined;
+        // Per-pack drop-rate weights: keep only known rarities with non-negative finite numbers.
+        let packWeights;
+        const rawWeights = req.body?.packWeights;
+        if (rawWeights && typeof rawWeights === "object") {
+            const sanitized = {};
+            for (const rarity of rarities) {
+                const value = Number(rawWeights[rarity]);
+                if (Number.isFinite(value) && value >= 0)
+                    sanitized[rarity] = value;
+            }
+            if (Object.keys(sanitized).length > 0)
+                packWeights = sanitized;
+        }
+        const rawPrice = Number(req.body?.packPrice);
+        const packPrice = Number.isFinite(rawPrice) && rawPrice >= 0 ? Math.floor(rawPrice) : undefined;
+        const enlargeOnOpen = typeof req.body?.enlargeOnOpen === "boolean" ? req.body.enlargeOnOpen : undefined;
+        // Full pack definitions (name/image/weights/price per pack) so public play runs the
+        // same OpenPack logic as the builder: pack picker + per-pack pool/weights/price.
+        let packDefs;
+        const rawPacks = req.body?.packs;
+        if (Array.isArray(rawPacks)) {
+            packDefs = rawPacks
+                .map((entry) => {
+                const sanitized = {};
+                const rawW = entry?.weights;
+                if (rawW && typeof rawW === "object") {
+                    for (const rarity of rarities) {
+                        const value = Number(rawW[rarity]);
+                        if (Number.isFinite(value) && value >= 0)
+                            sanitized[rarity] = value;
+                    }
+                }
+                const priceNum = Number(entry?.price);
+                const img = entry?.image;
+                return {
+                    id: String(entry?.id ?? ""),
+                    name: typeof entry?.name === "string" ? String(entry.name).slice(0, 120) : "",
+                    image: typeof img === "string" && img.startsWith("data:image/") ? img : "",
+                    ...(Object.keys(sanitized).length > 0 ? { weights: sanitized } : {}),
+                    ...(Number.isFinite(priceNum) && priceNum >= 0 ? { price: Math.floor(priceNum) } : {})
+                };
+            })
+                .filter((pack) => pack.id);
+            if (packDefs.length === 0)
+                packDefs = undefined;
+        }
         const packs = await readPacks();
         const id = packIdFor(normalized);
         const now = new Date().toISOString();
         packs[id] = {
             id,
             cards: normalized,
+            ...(packDefs ? { packs: packDefs } : {}),
+            ...(enlargeOnOpen !== undefined ? { enlargeOnOpen } : {}),
             ...(packImage ? { packImage } : {}),
             ...(packName ? { packName } : {}),
+            ...(packWeights ? { packWeights } : {}),
+            ...(packPrice !== undefined ? { packPrice } : {}),
             createdAt: packs[id]?.createdAt ?? now,
             updatedAt: now
         };

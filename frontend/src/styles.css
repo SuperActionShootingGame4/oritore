@@ -483,9 +483,45 @@ h3 {
 
 .pack-gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fill, 220px);
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 320px));
+  gap: 16px;
   justify-content: center;
+}
+
+.pack-entry {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e0e4df;
+  border-radius: 12px;
+  background: #fffdf8;
+}
+
+.pack-weights {
+  display: grid;
+  gap: 8px;
+}
+
+.pack-price-field {
+  display: grid;
+  gap: 4px;
+}
+
+.pack-price-field input {
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #cfd8d2;
+  border-radius: 8px;
+  background: #fff;
+  font-weight: 800;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #41514d;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .pack-art-card {
@@ -538,7 +574,10 @@ h3 {
 .pack-stage {
   display: grid;
   place-items: center;
-  min-height: 560px;
+  /* Reserve a fixed vertical size so the frame does not resize between
+     "before buying" (pack art) and "after opening" (revealed cards).
+     Tall enough that the revealed cards can wrap (e.g. 3 + 2 on mobile). */
+  height: 800px;
   overflow: hidden;
   border: 1px solid #d8ded9;
   border-radius: 8px;
@@ -770,10 +809,168 @@ h3 {
   text-align: center;
 }
 
-.single-pull {
+.reveal-layout {
   display: grid;
   justify-items: center;
+  gap: 20px;
+  width: 100%;
+  padding: 16px 0;
+}
+
+.reveal-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.reveal-thumb {
+  width: 124px;
+  height: 181px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: width 460ms ease, height 460ms ease;
+}
+
+.reveal-thumb.active {
+  width: 295px;
+  height: 430px;
+}
+
+.flip-scale {
+  width: 295px;
+  height: 430px;
+  transform-origin: top left;
+  transform: scale(0.42);
+  transition: transform 460ms ease;
+  perspective: 1200px;
+}
+
+.reveal-thumb.active .flip-scale {
+  transform: scale(1);
+}
+
+.flip-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 600ms ease;
+}
+
+.reveal-thumb.flipped .flip-inner {
+  transform: rotateY(180deg);
+}
+
+.flip-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  backface-visibility: hidden;
+}
+
+.flip-back {
+  background: url(/card_backside.png) center / cover no-repeat, #14352e;
+  box-shadow: 0 14px 32px rgba(26, 35, 31, 0.16);
+}
+
+.flip-front {
+  transform: rotateY(180deg);
+}
+
+.flip-front .trading-card {
+  pointer-events: none;
+}
+
+.config-list {
+  display: grid;
+  gap: 14px;
+  max-width: 640px;
+}
+
+.config-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 18px;
+  padding: 18px;
+  border: 1px solid #d8ded9;
+  border-radius: 12px;
+  background: #fffdf8;
+  cursor: pointer;
+}
+
+.config-row strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #17211e;
+}
+
+.config-row p {
+  margin: 0;
+  color: #61726d;
+  font-size: 13px;
+}
+
+.config-row input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  accent-color: #2b7f6d;
+}
+
+.config-weights {
+  grid-template-columns: minmax(0, 1fr);
+  cursor: default;
+}
+
+.weight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.weight-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e0e4df;
+  border-radius: 10px;
+  background: #fbfaf4;
+}
+
+.weight-item .rarity-tag {
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: #fff;
+  background: #18211f;
+  font-size: 12px;
+  font-weight: 1000;
+}
+
+.weight-item input[type="number"] {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid #cfd8d2;
+  border-radius: 8px;
+  background: #fff;
+  font-weight: 800;
+}
+
+.weight-item em {
+  grid-column: 1 / -1;
+  color: #61726d;
+  font-size: 12px;
+  font-style: normal;
+  text-align: right;
 }
 
 .next-button {

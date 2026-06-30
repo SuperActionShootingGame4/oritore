@@ -1,7 +1,7 @@
 import React, { ChangeEvent, PointerEvent, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, NavLink, Route, Routes, useParams } from "react-router-dom";
-import { BadgeDollarSign, Box, ChevronRight, Coins, Copy, ImagePlus, Layers, Save, Sparkles, Trash2 } from "lucide-react";
+import { BadgeDollarSign, Box, Coins, Copy, ImagePlus, Layers, Save, Settings, Sparkles, Trash2 } from "lucide-react";
 import "./styles.css";
 
 type Rarity = "N" | "HN" | "R" | "HR" | "SR" | "SSR" | "UR";
@@ -28,6 +28,8 @@ type PackDef = {
   id: string;
   name: string;
   image: string;
+  weights?: Record<Rarity, number>;
+  price?: number;
 };
 
 type PulledCard = Card & {
@@ -47,12 +49,19 @@ type StoredState = {
   collection: PulledCard[];
   packs: PackDef[];
   publishedPackId?: string;
+  enlargeOnOpen?: boolean;
 };
 
 type CardForm = Pick<Card, "name" | "image" | "flavor" | "creator">;
 
 function uid(prefix: string) {
-  return `${prefix}-${crypto.randomUUID()}`;
+  // crypto.randomUUID() is only available in secure contexts (https / localhost).
+  // Over plain HTTP on a LAN IP it's undefined, so fall back to a random string.
+  const rand =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}-${rand}`;
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -90,7 +99,7 @@ async function downscaleImage(file: File, maxDim = 768, quality = 0.82): Promise
 }
 
 function readStoredState(): StoredState {
-  const fallback: StoredState = { cards: [], balance: 1000, collection: [], packs: [] };
+  const fallback: StoredState = { cards: [], balance: 1000, collection: [], packs: [], enlargeOnOpen: true };
   try {
     const raw = localStorage.getItem(storageKey);
     return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
@@ -99,11 +108,12 @@ function readStoredState(): StoredState {
   }
 }
 
-function weightedRarity() {
-  const total = rarities.reduce((sum, rarity) => sum + weights[rarity], 0);
+function weightedRarity(w: Record<Rarity, number> = weights) {
+  const total = rarities.reduce((sum, rarity) => sum + Math.max(0, w[rarity] ?? 0), 0);
+  if (total <= 0) return "N";
   let ticket = Math.random() * total;
   for (const rarity of rarities) {
-    ticket -= weights[rarity];
+    ticket -= Math.max(0, w[rarity] ?? 0);
     if (ticket <= 0) return rarity;
   }
   return "N";
@@ -137,12 +147,12 @@ function nextCardNumber(cards: Card[]) {
   return String(maxNumber + 1);
 }
 
-function pickPack(pool: Card[]) {
+function pickPack(pool: Card[], w: Record<Rarity, number> = weights) {
   const byRarity = new Map<Rarity, Card[]>();
   for (const rarity of rarities) byRarity.set(rarity, pool.filter((card) => card.rarity === rarity));
 
   return Array.from({ length: 5 }, () => {
-    const rarity = weightedRarity();
+    const rarity = weightedRarity(w);
     const choices = byRarity.get(rarity) ?? pool;
     const card = choices[Math.floor(Math.random() * choices.length)] ?? pool[0];
     return { ...card, pullId: uid("pull") };
@@ -170,6 +180,7 @@ function BuilderApp() {
   );
   const [xAuth, setXAuth] = useState<{ username: string; followers: number } | null>(null);
   const [packs, setPacks] = useState<PackDef[]>(() => readStoredState().packs);
+  const [enlargeOnOpen, setEnlargeOnOpen] = useState<boolean>(() => readStoredState().enlargeOnOpen ?? true);
   const publicUrl = publishedPackId ? `${window.location.origin}/play/${publishedPackId}` : "";
 
   useEffect(() => {
@@ -189,11 +200,11 @@ function BuilderApp() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(storageKey, JSON.stringify({ cards, balance, collection, packs, publishedPackId }));
+      localStorage.setItem(storageKey, JSON.stringify({ cards, balance, collection, packs, publishedPackId, enlargeOnOpen }));
     } catch (error) {
       console.warn("ローカル保存に失敗しました（保存容量の上限超過の可能性）", error);
     }
-  }, [cards, balance, collection, packs, publishedPackId]);
+  }, [cards, balance, collection, packs, publishedPackId, enlargeOnOpen]);
 
   useEffect(() => {
     if (cards.length === 0) {
@@ -204,14 +215,15 @@ function BuilderApp() {
 
     const controller = new AbortController();
     setPublishStatus("publishing");
-    const firstPackId = cards.find(c => c.packId)?.packId;
-    const firstPack = firstPackId ? packs.find(p => p.id === firstPackId) : undefined;
-    const packImage = firstPack?.image;
-    const packName = firstPack?.name;
+    // Publish the full pack definitions (only those that actually contain cards) so the
+    // public play experience runs the exact same OpenPack logic as the builder:
+    // pack picker, per-pack pools, per-pack weights and price.
+    const usedPackIds = new Set(cards.map((card) => card.packId).filter(Boolean));
+    const publishedPacks = packs.filter((pack) => usedPackIds.has(pack.id));
     fetch("/api/packs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cards, ...(packImage ? { packImage } : {}), ...(packName ? { packName } : {}) }),
+      body: JSON.stringify({ cards, packs: publishedPacks, enlargeOnOpen }),
       signal: controller.signal
     })
       .then((response) => {
@@ -227,7 +239,7 @@ function BuilderApp() {
       });
 
     return () => controller.abort();
-  }, [cards]);
+  }, [cards, packs, enlargeOnOpen]);
 
   return (
     <div className="app-shell with-publish-bar">
@@ -248,6 +260,9 @@ function BuilderApp() {
           </NavLink>
           <NavLink to="/open">
             <Box size={18} /> パック開封
+          </NavLink>
+          <NavLink to="/config">
+            <Settings size={18} /> コンフィグ
           </NavLink>
         </nav>
         <div className="wallet">
@@ -270,9 +285,11 @@ function BuilderApp() {
                 collection={collection}
                 setCollection={setCollection}
                 packs={packs}
+                enlargeOnOpen={enlargeOnOpen}
               />
             }
           />
+          <Route path="/config" element={<Config enlargeOnOpen={enlargeOnOpen} setEnlargeOnOpen={setEnlargeOnOpen} />} />
         </Routes>
       </main>
       <PublishBar publicUrl={publicUrl} status={publishStatus} cardCount={cards.length} />
@@ -283,8 +300,8 @@ function BuilderApp() {
 function PublicPlayApp() {
   const { packId } = useParams();
   const [cards, setCards] = useState<Card[]>([]);
-  const [packImage, setPackImage] = useState<string | undefined>(undefined);
-  const [packName, setPackName] = useState<string | undefined>(undefined);
+  const [packs, setPacks] = useState<PackDef[]>([]);
+  const [enlargeOnOpen, setEnlargeOnOpen] = useState(true);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [balance, setBalance] = useState(1000);
   const [collection, setCollection] = useState<PulledCard[]>([]);
@@ -294,12 +311,38 @@ function PublicPlayApp() {
     fetch(`/api/packs/${packId}`)
       .then((response) => {
         if (!response.ok) throw new Error("pack not found");
-        return response.json() as Promise<{ cards?: Card[]; packImage?: string; packName?: string }>;
+        return response.json() as Promise<{
+          cards?: Card[];
+          packs?: PackDef[];
+          enlargeOnOpen?: boolean;
+          packImage?: string;
+          packName?: string;
+          packWeights?: Record<Rarity, number>;
+          packPrice?: number;
+        }>;
       })
       .then((pack) => {
-        setCards(pack.cards ?? []);
-        setPackImage(pack.packImage);
-        setPackName(pack.packName);
+        let loadedCards = pack.cards ?? [];
+        let loadedPacks = pack.packs ?? [];
+        setEnlargeOnOpen(pack.enlargeOnOpen ?? true);
+        if (loadedPacks.length === 0) {
+          // Backward-compat: packs published before pack metadata was stored kept a single
+          // flat pack and cards without packId. Synthesize one pack so the unified OpenPack
+          // (pack picker + per-pack pool/weights/price) still works.
+          const fallbackId = "__published__";
+          loadedPacks = [
+            {
+              id: fallbackId,
+              name: pack.packName ?? "ORITORE",
+              image: pack.packImage ?? "",
+              weights: pack.packWeights,
+              price: pack.packPrice
+            }
+          ];
+          loadedCards = loadedCards.map((card) => ({ ...card, packId: card.packId || fallbackId }));
+        }
+        setCards(loadedCards);
+        setPacks(loadedPacks);
         setStatus("ready");
       })
       .catch(() => setStatus("error"));
@@ -321,11 +364,42 @@ function PublicPlayApp() {
         setBalance={setBalance}
         collection={collection}
         setCollection={setCollection}
-        packImage={packImage}
-        packName={packName}
+        packs={packs}
+        enlargeOnOpen={enlargeOnOpen}
         publicOnly
       />
     </main>
+  );
+}
+
+function WeightEditor({
+  value,
+  onChange
+}: {
+  value: Record<Rarity, number>;
+  onChange: (rarity: Rarity, next: number) => void;
+}) {
+  const total = rarities.reduce((sum, rarity) => sum + Math.max(0, value[rarity] ?? 0), 0);
+  return (
+    <div className="weight-grid">
+      {rarities.map((rarity) => {
+        const w = Math.max(0, value[rarity] ?? 0);
+        const pct = total > 0 ? (w / total) * 100 : 0;
+        return (
+          <label key={rarity} className="weight-item">
+            <span className={`rarity-tag ${rarity}`}>{rarity}</span>
+            <input
+              type="number"
+              min={0}
+              step="0.1"
+              value={w}
+              onChange={(event) => onChange(rarity, Number.parseFloat(event.target.value))}
+            />
+            <em>{pct.toFixed(1)}%</em>
+          </label>
+        );
+      })}
+    </div>
   );
 }
 
@@ -338,6 +412,8 @@ function PackRegister({
 }) {
   const [name, setName] = useState("");
   const [image, setImage] = useState("");
+  const [formWeights, setFormWeights] = useState<Record<Rarity, number>>(() => ({ ...weights }));
+  const [price, setPrice] = useState<number>(packPrice);
   const canAdd = name.trim() !== "" && Boolean(image);
 
   async function onUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -350,13 +426,35 @@ function PackRegister({
 
   function addPack() {
     if (!canAdd) return;
-    setPacks((current) => [{ id: uid("pack"), name: name.trim(), image }, ...current]);
+    setPacks((current) => [{ id: uid("pack"), name: name.trim(), image, weights: { ...formWeights }, price }, ...current]);
     setName("");
     setImage("");
+    setFormWeights({ ...weights });
+    setPrice(packPrice);
   }
 
   function removePack(id: string) {
     setPacks((current) => current.filter((pack) => pack.id !== id));
+  }
+
+  function updateFormWeight(rarity: Rarity, value: number) {
+    setFormWeights((current) => ({ ...current, [rarity]: Number.isFinite(value) && value >= 0 ? value : 0 }));
+  }
+
+  function updatePackWeight(packId: string, rarity: Rarity, value: number) {
+    setPacks((current) =>
+      current.map((pack) =>
+        pack.id === packId
+          ? { ...pack, weights: { ...weights, ...(pack.weights ?? {}), [rarity]: Number.isFinite(value) && value >= 0 ? value : 0 } }
+          : pack
+      )
+    );
+  }
+
+  function updatePackPrice(packId: string, value: number) {
+    setPacks((current) =>
+      current.map((pack) => (pack.id === packId ? { ...pack, price: Number.isFinite(value) && value >= 0 ? value : 0 } : pack))
+    );
   }
 
   return (
@@ -386,6 +484,20 @@ function PackRegister({
               <input type="file" accept="image/*" onChange={onUpload} />
             </span>
           </label>
+          <label className="wide-field">
+            1パックの価格（円）
+            <input
+              type="number"
+              min={0}
+              step="1"
+              value={price}
+              onChange={(event) => setPrice(Math.max(0, Number.parseInt(event.target.value, 10) || 0))}
+            />
+          </label>
+          <div className="wide-field">
+            <span className="field-label">レアリティ排出率（重み）</span>
+            <WeightEditor value={formWeights} onChange={updateFormWeight} />
+          </div>
         </form>
         <div className="template-preview">
           <div className="pack-art-card">
@@ -399,7 +511,7 @@ function PackRegister({
         <div className="empty-state">
           <Layers size={42} />
           <h3>パックを登録</h3>
-          <p>パック名と画像を登録すると、カード登録時にパックをリストから選べるようになります。</p>
+          <p>パック名と画像、排出率を登録すると、カード登録時にパックをリストから選べるようになります。</p>
         </div>
       ) : (
         <div className="registered-cards">
@@ -408,7 +520,7 @@ function PackRegister({
           </div>
           <div className="pack-gallery">
             {packs.map((pack) => (
-              <div className="registered-card" key={pack.id}>
+              <div className="registered-card pack-entry" key={pack.id}>
                 <div className="pack-art-card">
                   {pack.image ? <img src={pack.image} alt="" /> : <div className="image-placeholder">PACK IMAGE</div>}
                   <strong>{pack.name}</strong>
@@ -416,6 +528,23 @@ function PackRegister({
                 <button className="icon-button" type="button" aria-label="削除" onClick={() => removePack(pack.id)}>
                   <Trash2 size={17} />
                 </button>
+                <label className="pack-price-field">
+                  <span className="field-label">1パックの価格（円）</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="1"
+                    value={pack.price ?? packPrice}
+                    onChange={(event) => updatePackPrice(pack.id, Math.max(0, Number.parseInt(event.target.value, 10) || 0))}
+                  />
+                </label>
+                <div className="pack-weights">
+                  <span className="field-label">排出率（重み）</span>
+                  <WeightEditor
+                    value={{ ...weights, ...(pack.weights ?? {}) }}
+                    onChange={(rarity, value) => updatePackWeight(pack.id, rarity, value)}
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -615,8 +744,7 @@ function OpenPack({
   collection,
   setCollection,
   packs,
-  packImage,
-  packName,
+  enlargeOnOpen = true,
   publicOnly = false
 }: {
   cardPool: Card[];
@@ -625,12 +753,12 @@ function OpenPack({
   collection: PulledCard[];
   setCollection: React.Dispatch<React.SetStateAction<PulledCard[]>>;
   packs?: PackDef[];
-  packImage?: string;
-  packName?: string;
+  enlargeOnOpen?: boolean;
   publicOnly?: boolean;
 }) {
   const [currentPack, setCurrentPack] = useState<PulledCard[]>([]);
-  const [position, setPosition] = useState(0);
+  const [position, setPosition] = useState(-1);
+  const [flipped, setFlipped] = useState<Set<number>>(new Set());
   const [animation, setAnimation] = useState<"idle" | "normal" | "premium">("idle");
   const [openingPhase, setOpeningPhase] = useState<"idle" | "sealed" | "ripping" | "opened">("idle");
   const [selectedPackId, setSelectedPackId] = useState("");
@@ -653,17 +781,21 @@ function OpenPack({
     }
   }, [showPackPicker, selectedPackId, packs, cardPool]);
 
-  const canBuy = activePool.length > 0 && balance >= packPrice && currentPack.length === 0;
-  const revealed = currentPack.slice(0, position);
-  const isComplete = currentPack.length > 0 && position >= currentPack.length;
+  // Each pack carries its own drop-rate weights and price (set on the pack-register screen);
+  // both builder and public play resolve them from the selected pack.
+  const activeWeights = selectedPack?.weights ?? weights;
+  const activePrice = selectedPack?.price ?? packPrice;
+  const canBuy = activePool.length > 0 && balance >= activePrice && currentPack.length === 0;
+  const opened = openingPhase === "opened" && currentPack.length > 0;
   const isPremiumPack = currentPack.some((card) => highRarities.has(card.rarity));
 
   function buyPack() {
     if (!canBuy) return;
-    const pack = pickPack(activePool);
-    setBalance((current) => current - packPrice);
+    const pack = pickPack(activePool, activeWeights);
+    setBalance((current) => current - activePrice);
     setCurrentPack(pack);
-    setPosition(0);
+    setPosition(-1);
+    setFlipped(new Set());
     setOpeningPhase("sealed");
     setAnimation("idle");
   }
@@ -678,14 +810,11 @@ function OpenPack({
     }, 900);
   }
 
-  function nextCard() {
-    setPosition((current) => Math.min(current + 1, currentPack.length));
-  }
-
   function finishPack() {
     setCollection((current) => [...currentPack, ...current]);
     setCurrentPack([]);
-    setPosition(0);
+    setPosition(-1);
+    setFlipped(new Set());
     setOpeningPhase("idle");
   }
 
@@ -721,7 +850,7 @@ function OpenPack({
           )}
           <button className="primary-button" type="button" onClick={buyPack} disabled={!canBuy}>
             <Box size={18} />
-            {packPrice.toLocaleString()}円で購入
+            {activePrice.toLocaleString()}円で購入
           </button>
         </div>
       </header>
@@ -738,24 +867,37 @@ function OpenPack({
             </div>
           ) : currentPack.length === 0 ? (
             <button className="pack-art" type="button" onClick={buyPack} disabled={!canBuy}>
-              {(selectedPack?.image ?? packImage) ? <img src={selectedPack?.image ?? packImage} alt="" /> : null}
-              <span>{selectedPack?.name ?? packName ?? "ORITORE"}</span>
+              {selectedPack?.image ? <img src={selectedPack.image} alt="" /> : null}
+              <span>{selectedPack?.name ?? "ORITORE"}</span>
               <strong>5 CARDS</strong>
             </button>
           ) : openingPhase !== "opened" ? (
-            <PackRipInteraction premium={isPremiumPack} phase={openingPhase === "ripping" ? "ripping" : "sealed"} onComplete={completePackRip} image={selectedPack?.image ?? packImage} />
-          ) : isComplete ? (
-            <div className="result-grid">
-              {currentPack.map((card) => (
-                <TradingCard key={card.pullId} card={card} total={activePool.length} packName={selectedPack?.name ?? packName} compact />
-              ))}
-            </div>
+            <PackRipInteraction premium={isPremiumPack} phase={openingPhase === "ripping" ? "ripping" : "sealed"} onComplete={completePackRip} image={selectedPack?.image} />
           ) : (
-            <div className="single-pull">
-              <TradingCard card={currentPack[position]} total={activePool.length} packName={selectedPack?.name ?? packName} />
-              <button className="next-button" type="button" onClick={nextCard}>
-                次へ <ChevronRight size={20} />
-              </button>
+            <div className="reveal-layout">
+              <div className="reveal-strip">
+                {currentPack.map((card, index) => (
+                  <button
+                    key={card.pullId}
+                    type="button"
+                    className={`reveal-thumb ${enlargeOnOpen && index === position ? "active" : ""} ${flipped.has(index) ? "flipped" : ""}`}
+                    onClick={() => {
+                      setPosition(index);
+                      setFlipped((current) => (current.has(index) ? current : new Set(current).add(index)));
+                    }}
+                    aria-label={`${index + 1}枚目を表示`}
+                  >
+                    <div className="flip-scale">
+                      <div className="flip-inner">
+                        <div className="flip-face flip-back" />
+                        <div className="flip-face flip-front">
+                          <TradingCard card={card} total={activePool.length} packName={selectedPack?.name} />
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -763,7 +905,7 @@ function OpenPack({
         <div className="side-panel">
           <Metric icon={<Coins size={18} />} label="所持金" value={`${balance.toLocaleString()}円`} />
           <Metric icon={<BadgeDollarSign size={18} />} label="売却額" value={`${collection.reduce((sum, card) => sum + card.value, 0).toLocaleString()}円`} />
-          {isComplete && (
+          {opened && (
             <div className="action-stack">
               <button className="primary-button full" type="button" onClick={finishPack}>
                 コレクションへ入れる
@@ -773,19 +915,43 @@ function OpenPack({
               </button>
             </div>
           )}
-          {revealed.length > 0 && !isComplete && (
-            <div className="mini-results">
-              {revealed.map((card) => (
-                <span key={card.pullId} className={`rarity-chip ${card.rarity}`}>
-                  {card.rarity}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
-      <Collection cards={collection} totalCards={activePool.length} sellCards={sellCards} packs={packList} cardPool={cardPool} fallbackPackName={packName} />
+      <Collection cards={collection} totalCards={activePool.length} sellCards={sellCards} packs={packList} cardPool={cardPool} />
+    </section>
+  );
+}
+
+function Config({
+  enlargeOnOpen,
+  setEnlargeOnOpen
+}: {
+  enlargeOnOpen: boolean;
+  setEnlargeOnOpen: React.Dispatch<React.SetStateAction<boolean>>;
+}) {
+  return (
+    <section className="screen">
+      <header className="screen-header">
+        <div>
+          <p className="eyebrow">CONFIG</p>
+          <h2>コンフィグ</h2>
+        </div>
+      </header>
+
+      <div className="config-list">
+        <label className="config-row">
+          <div>
+            <strong>開封時にカードを拡大する</strong>
+            <p>パック開封でカードを選んだとき、通常サイズへ拡大表示します。オフにすると裏返しのみで拡大しません。</p>
+          </div>
+          <input
+            type="checkbox"
+            checked={enlargeOnOpen}
+            onChange={(event) => setEnlargeOnOpen(event.target.checked)}
+          />
+        </label>
+      </div>
     </section>
   );
 }
@@ -923,7 +1089,7 @@ function PublishBar({ publicUrl, status, cardCount }: { publicUrl: string; statu
   );
 }
 
-function Collection({ cards, totalCards, sellCards, packs, cardPool, fallbackPackName }: { cards: PulledCard[]; totalCards: number; sellCards: (cards: PulledCard[]) => void; packs?: PackDef[]; cardPool?: Card[]; fallbackPackName?: string }) {
+function Collection({ cards, totalCards, sellCards, packs, cardPool }: { cards: PulledCard[]; totalCards: number; sellCards: (cards: PulledCard[]) => void; packs?: PackDef[]; cardPool?: Card[] }) {
   const total = cards.reduce((sum, card) => sum + card.value, 0);
 
   // Group identical cards (same source card id) so duplicates show once with an ×N count.
@@ -953,7 +1119,7 @@ function Collection({ cards, totalCards, sellCards, packs, cardPool, fallbackPac
         <div className="collection-grid">
           {groups.map(({ card, count }) => {
             const cardPackTotal = cardPool && card.packId ? cardPool.filter(c => c.packId === card.packId).length : totalCards;
-            const cardPackName = packs?.find(p => p.id === card.packId)?.name ?? fallbackPackName;
+            const cardPackName = packs?.find(p => p.id === card.packId)?.name;
             return (
             <div className="collection-card" key={card.id}>
               <TradingCard card={card} total={cardPackTotal} packName={cardPackName} dupeCount={count} compact />
