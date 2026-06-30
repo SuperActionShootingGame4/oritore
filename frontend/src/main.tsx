@@ -204,10 +204,14 @@ function BuilderApp() {
 
     const controller = new AbortController();
     setPublishStatus("publishing");
+    const firstPackId = cards.find(c => c.packId)?.packId;
+    const firstPack = firstPackId ? packs.find(p => p.id === firstPackId) : undefined;
+    const packImage = firstPack?.image;
+    const packName = firstPack?.name;
     fetch("/api/packs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cards }),
+      body: JSON.stringify({ cards, ...(packImage ? { packImage } : {}), ...(packName ? { packName } : {}) }),
       signal: controller.signal
     })
       .then((response) => {
@@ -279,6 +283,8 @@ function BuilderApp() {
 function PublicPlayApp() {
   const { packId } = useParams();
   const [cards, setCards] = useState<Card[]>([]);
+  const [packImage, setPackImage] = useState<string | undefined>(undefined);
+  const [packName, setPackName] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [balance, setBalance] = useState(1000);
   const [collection, setCollection] = useState<PulledCard[]>([]);
@@ -288,10 +294,12 @@ function PublicPlayApp() {
     fetch(`/api/packs/${packId}`)
       .then((response) => {
         if (!response.ok) throw new Error("pack not found");
-        return response.json() as Promise<{ cards?: Card[] }>;
+        return response.json() as Promise<{ cards?: Card[]; packImage?: string; packName?: string }>;
       })
       .then((pack) => {
         setCards(pack.cards ?? []);
+        setPackImage(pack.packImage);
+        setPackName(pack.packName);
         setStatus("ready");
       })
       .catch(() => setStatus("error"));
@@ -313,6 +321,8 @@ function PublicPlayApp() {
         setBalance={setBalance}
         collection={collection}
         setCollection={setCollection}
+        packImage={packImage}
+        packName={packName}
         publicOnly
       />
     </main>
@@ -507,10 +517,6 @@ function CreatePack({
           <p className="eyebrow">STEP 1</p>
           <h2>カード登録モード</h2>
         </div>
-        <button className="primary-button" type="button" onClick={saveCard} disabled={!canSave}>
-          <Save size={18} />
-          {saving ? "生成中…" : "カード登録"}
-        </button>
       </header>
 
       <div className="summary-strip">
@@ -568,9 +574,13 @@ function CreatePack({
             カードフレイバー
             <textarea value={form.flavor} placeholder="カードフレイバーを入力" onChange={(event) => updateForm("flavor", event.target.value)} rows={4} />
           </label>
+          <button className="primary-button" type="button" onClick={saveCard} disabled={!canSave}>
+            <Save size={18} />
+            {saving ? "生成中…" : "カード登録"}
+          </button>
         </form>
         <div className="template-preview">
-          <TradingCard card={previewCard} total={cards.length + 1} concealStats />
+          <TradingCard card={previewCard} total={packId ? cards.filter(c => c.packId === packId).length + 1 : cards.length + 1} packName={packId ? packs.find(p => p.id === packId)?.name : undefined} concealStats />
         </div>
       </div>
 
@@ -588,10 +598,7 @@ function CreatePack({
           <div className="card-gallery">
             {cards.map((card) => (
               <div className="registered-card" key={card.id}>
-                <TradingCard card={card} total={cards.length} compact />
-                <button className="icon-button" type="button" aria-label="削除" onClick={() => removeCard(card.id)}>
-                  <Trash2 size={17} />
-                </button>
+                <TradingCard card={card} total={cards.filter(c => c.packId === card.packId).length} packName={packs.find(p => p.id === card.packId)?.name} onRemove={() => removeCard(card.id)} compact />
               </div>
             ))}
           </div>
@@ -608,6 +615,8 @@ function OpenPack({
   collection,
   setCollection,
   packs,
+  packImage,
+  packName,
   publicOnly = false
 }: {
   cardPool: Card[];
@@ -616,6 +625,8 @@ function OpenPack({
   collection: PulledCard[];
   setCollection: React.Dispatch<React.SetStateAction<PulledCard[]>>;
   packs?: PackDef[];
+  packImage?: string;
+  packName?: string;
   publicOnly?: boolean;
 }) {
   const [currentPack, setCurrentPack] = useState<PulledCard[]>([]);
@@ -727,21 +738,21 @@ function OpenPack({
             </div>
           ) : currentPack.length === 0 ? (
             <button className="pack-art" type="button" onClick={buyPack} disabled={!canBuy}>
-              {selectedPack?.image ? <img src={selectedPack.image} alt="" /> : null}
-              <span>{selectedPack?.name ?? "ORITORE"}</span>
+              {(selectedPack?.image ?? packImage) ? <img src={selectedPack?.image ?? packImage} alt="" /> : null}
+              <span>{selectedPack?.name ?? packName ?? "ORITORE"}</span>
               <strong>5 CARDS</strong>
             </button>
           ) : openingPhase !== "opened" ? (
-            <PackRipInteraction premium={isPremiumPack} phase={openingPhase === "ripping" ? "ripping" : "sealed"} onComplete={completePackRip} image={selectedPack?.image} />
+            <PackRipInteraction premium={isPremiumPack} phase={openingPhase === "ripping" ? "ripping" : "sealed"} onComplete={completePackRip} image={selectedPack?.image ?? packImage} />
           ) : isComplete ? (
             <div className="result-grid">
               {currentPack.map((card) => (
-                <TradingCard key={card.pullId} card={card} total={activePool.length} compact />
+                <TradingCard key={card.pullId} card={card} total={activePool.length} packName={selectedPack?.name ?? packName} compact />
               ))}
             </div>
           ) : (
             <div className="single-pull">
-              <TradingCard card={currentPack[position]} total={activePool.length} />
+              <TradingCard card={currentPack[position]} total={activePool.length} packName={selectedPack?.name ?? packName} />
               <button className="next-button" type="button" onClick={nextCard}>
                 次へ <ChevronRight size={20} />
               </button>
@@ -774,7 +785,7 @@ function OpenPack({
         </div>
       </div>
 
-      <Collection cards={collection} totalCards={activePool.length} sellCards={sellCards} />
+      <Collection cards={collection} totalCards={activePool.length} sellCards={sellCards} packs={packList} cardPool={cardPool} fallbackPackName={packName} />
     </section>
   );
 }
@@ -912,7 +923,7 @@ function PublishBar({ publicUrl, status, cardCount }: { publicUrl: string; statu
   );
 }
 
-function Collection({ cards, totalCards, sellCards }: { cards: PulledCard[]; totalCards: number; sellCards: (cards: PulledCard[]) => void }) {
+function Collection({ cards, totalCards, sellCards, packs, cardPool, fallbackPackName }: { cards: PulledCard[]; totalCards: number; sellCards: (cards: PulledCard[]) => void; packs?: PackDef[]; cardPool?: Card[]; fallbackPackName?: string }) {
   const total = cards.reduce((sum, card) => sum + card.value, 0);
 
   // Group identical cards (same source card id) so duplicates show once with an ×N count.
@@ -940,30 +951,41 @@ function Collection({ cards, totalCards, sellCards }: { cards: PulledCard[]; tot
         <p className="muted">開封したカードはここに保存されます。</p>
       ) : (
         <div className="collection-grid">
-          {groups.map(({ card, count }) => (
+          {groups.map(({ card, count }) => {
+            const cardPackTotal = cardPool && card.packId ? cardPool.filter(c => c.packId === card.packId).length : totalCards;
+            const cardPackName = packs?.find(p => p.id === card.packId)?.name ?? fallbackPackName;
+            return (
             <div className="collection-card" key={card.id}>
-              <TradingCard card={card} total={totalCards} compact />
-              {count > 1 && <span className="dupe-badge">×{count}</span>}
+              <TradingCard card={card} total={cardPackTotal} packName={cardPackName} dupeCount={count} compact />
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
   );
 }
 
-function TradingCard({ card, total, compact = false, concealStats = false }: { card: Card; total?: number; compact?: boolean; concealStats?: boolean }) {
+function TradingCard({ card, total, packName, onRemove, dupeCount, compact = false, concealStats = false }: { card: Card; total?: number; packName?: string; onRemove?: () => void; dupeCount?: number; compact?: boolean; concealStats?: boolean }) {
+  const rarityLabel = concealStats ? "??" : card.rarity;
+  const paddedNo = String(card.cardNo).padStart(3, "0");
+  const noLabel = packName ? `${rarityLabel}-${paddedNo} ${packName}` : `${rarityLabel}-${paddedNo}`;
   return (
     <article className={`trading-card ${concealStats ? "concealed-card" : card.rarity} ${compact ? "compact" : ""}`}>
+      {onRemove ? (
+        <button className="card-remove-btn icon-button" type="button" aria-label="削除" onClick={onRemove}>
+          <Trash2 size={17} />
+        </button>
+      ) : null}
       <header className="card-title-row">
         <strong>{card.name}</strong>
-        <span className="card-rarity">{concealStats ? "??" : card.rarity}</span>
       </header>
       <div className="card-stars" aria-label={`星${card.stars}`}>
         {concealStats ? <span>登録後に生成</span> : Array.from({ length: card.stars }, (_, index) => <span key={index}>★</span>)}
       </div>
       <div className="card-image-wrap">
         {card.image ? <img src={card.image} alt="" /> : <div className="image-placeholder">CARD IMAGE</div>}
+        {dupeCount && dupeCount > 1 ? <span className="dupe-badge">×{dupeCount}</span> : null}
       </div>
       <p className="card-flavor">{card.flavor}</p>
       <div className="card-stats">
@@ -971,9 +993,8 @@ function TradingCard({ card, total, compact = false, concealStats = false }: { c
         <span>DEF {concealStats ? "???" : card.def}</span>
       </div>
       <footer className="card-meta">
-        <span>{total ? `${card.cardNo}/${total}` : card.cardNo}</span>
-        <span>{card.creator}</span>
-        <span>{concealStats ? "登録後" : `${card.value.toLocaleString()}円`}</span>
+        <span>{noLabel}</span>
+        <span className="card-creator">{card.creator}</span>
       </footer>
       {card.twitter && !concealStats ? (
         <a className="card-x-link" href={`https://x.com/${card.twitter}`} target="_blank" rel="noreferrer">

@@ -23,7 +23,7 @@ Local development needs **two processes**: `npm run dev` and `npm run dev:fronte
 Two independently-compiled TypeScript halves with separate tsconfigs:
 
 - **Backend** (`src/server.ts`, `tsconfig.server.json`, NodeNext ESM): a single-file Express app. Compiles to `dist/`. In production it also serves `frontend/dist/` statically and falls back to `index.html` for any unmatched route (client-side routing).
-- **Frontend** (`frontend/`, `frontend/tsconfig.json`, Bundler resolution, `noEmit`): the **entire React app lives in `frontend/src/main.tsx`** (~700 lines) — all components, routing, game logic, and the rarity/value/weight tables are there. `frontend/src/styles.css` holds all styling. Vite `root` is `frontend/`.
+- **Frontend** (`frontend/`, `frontend/tsconfig.json`, Bundler resolution, `noEmit`): the **entire React app lives in `frontend/src/main.tsx`** (~1000 lines) — all components, routing, game logic, and the rarity/value/weight tables are there. `frontend/src/styles.css` holds all styling. Vite `root` is `frontend/`.
 
 ### Routing splits the app into two modes
 `main.tsx` `<App>` routes `/play/:packId` to `PublicPlayApp` (the published, third-party play experience that fetches a pack from the server) and everything else to `BuilderApp` (the creator: `CreatePack`, `OpenPack`, `Collection` tabs).
@@ -50,6 +50,10 @@ Card stats (rarity/stars/atk/def/value) are **generated on the server**, not in 
 
 ### X OAuth setup (required for the follower feature)
 Configure via env (`.env`, see `.env.example`): `X_CLIENT_ID`, `X_CLIENT_SECRET`, `X_REDIRECT_URI`, `APP_SECRET`. The npm `dev`/`start` scripts load `.env` via Node's `--env-file-if-exists`. In the X Developer Portal: Web App / **confidential** client, OAuth 2.0 on, scopes `users.read tweet.read`, Callback URL must match `X_REDIRECT_URI` exactly (dev: `http://localhost:3000/auth/twitter/callback`). **Caveat:** reading `users/me` + `public_metrics` may not be in X's free tier (could require the paid Basic plan); the callback returns a friendly error if X responds 403/453.
+
+## Docker / deployment
+
+`Dockerfile` does a two-stage build (build → runtime). The runtime image exposes port 3000 and serves both API and static frontend. **Mount a persistent volume at `/app/data`** so `data/packs.json` survives container restarts. Required env vars at runtime: `APP_SECRET`, and optionally `X_CLIENT_ID`/`X_CLIENT_SECRET`/`X_REDIRECT_URI` for the follower feature, plus `PORT` (default 3000). `template/` contains card-frame and pack-art PNG assets plus sample JPEG images used for manual testing — they are not imported by the app at runtime.
 
 ## Spec vs. implementation (important)
 

@@ -610,7 +610,7 @@ h3 {
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .pack-art span,
@@ -823,8 +823,8 @@ h3 {
 
 .dupe-badge {
   position: absolute;
-  top: -12px;
-  right: -12px;
+  bottom: 6px;
+  right: 6px;
   z-index: 3;
   min-width: 56px;
   height: 56px;
@@ -925,7 +925,7 @@ h3 {
 
 .card-title-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   align-items: center;
   min-width: 0;
@@ -952,6 +952,7 @@ h3 {
 }
 
 .card-image-wrap {
+  position: relative;
   aspect-ratio: 1.18;
   overflow: hidden;
   border: 3px solid rgba(0, 0, 0, 0.18);
@@ -959,6 +960,16 @@ h3 {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.65), transparent 48%),
     #dbe2df;
+}
+
+.card-remove-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  border-radius: 6px;
 }
 
 .card-image-wrap img {
@@ -1003,7 +1014,7 @@ h3 {
 
 .card-meta {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -1017,9 +1028,10 @@ h3 {
   white-space: nowrap;
 }
 
-.card-meta span:last-child {
+.card-creator {
+  text-align: right;
   color: #17211e;
-  font-weight: 900;
+  font-weight: 400;
 }
 
 .compact {

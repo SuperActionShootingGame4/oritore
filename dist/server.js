@@ -329,12 +329,20 @@ app.post("/api/packs", async (req, res, next) => {
             res.status(400).json({ error: "all card images must be image data URLs" });
             return;
         }
+        const packImage = typeof req.body?.packImage === "string" ? req.body.packImage : undefined;
+        if (packImage !== undefined && !packImage.startsWith("data:image/")) {
+            res.status(400).json({ error: "packImage must be an image data URL" });
+            return;
+        }
+        const packName = typeof req.body?.packName === "string" ? req.body.packName.slice(0, 120) : undefined;
         const packs = await readPacks();
         const id = packIdFor(normalized);
         const now = new Date().toISOString();
         packs[id] = {
             id,
             cards: normalized,
+            ...(packImage ? { packImage } : {}),
+            ...(packName ? { packName } : {}),
             createdAt: packs[id]?.createdAt ?? now,
             updatedAt: now
         };
