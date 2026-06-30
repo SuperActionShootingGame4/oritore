@@ -18,6 +18,16 @@ type Card = {
   flavor: string;
   cardNo: string;
   creator: string;
+  packId?: string;
+  twitter?: string;
+  followers?: number;
+  sig?: string;
+};
+
+type PackDef = {
+  id: string;
+  name: string;
+  image: string;
 };
 
 type PulledCard = Card & {
@@ -35,6 +45,7 @@ type StoredState = {
   cards: Card[];
   balance: number;
   collection: PulledCard[];
+  packs: PackDef[];
   publishedPackId?: string;
 };
 
@@ -44,8 +55,42 @@ function uid(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+// Downscale + re-encode uploads so multiple images fit in localStorage (and shrink published packs).
+async function downscaleImage(file: File, maxDim = 768, quality = 0.82): Promise<string> {
+  const dataUrl = await fileToDataUrl(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("image decode failed"));
+      image.src = dataUrl;
+    });
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const width = Math.max(1, Math.round(img.width * scale));
+    const height = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", quality);
+  } catch {
+    return dataUrl;
+  }
+}
+
 function readStoredState(): StoredState {
-  const fallback: StoredState = { cards: [], balance: 1000, collection: [] };
+  const fallback: StoredState = { cards: [], balance: 1000, collection: [], packs: [] };
   try {
     const raw = localStorage.getItem(storageKey);
     return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
@@ -64,43 +109,21 @@ function weightedRarity() {
   return "N";
 }
 
-function randomInt(min: number, max: number) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function roundTo50(value: number) {
-  return String(Math.min(3000, Math.max(0, Math.round(value / 50) * 50)));
-}
-
-function randomBattleParams() {
-  const rarity = weightedRarity();
-  const starRanges: Record<Rarity, [number, number]> = {
-    N: [1, 2],
-    HN: [2, 3],
-    R: [3, 4],
-    HR: [4, 5],
-    SR: [5, 6],
-    SSR: [6, 7],
-    UR: [7, 8]
-  };
-  const [minStars, maxStars] = starRanges[rarity];
-  const stars = randomInt(minStars, maxStars);
-  const statMin = stars * 230;
-  const statMax = Math.min(3000, stars * 375);
-
-  return {
-    rarity,
-    stars,
-    atk: roundTo50(randomInt(statMin, statMax)),
-    def: roundTo50(randomInt(statMin, statMax))
-  };
+// Card stats (rarity/stars/atk/def) are generated server-side via POST /api/cards/generate
+// so the follower-based rarity floor cannot be tampered with. See src/server.ts.
+function floorLabel(followers: number) {
+  if (followers >= 1_000_000) return "SR以上";
+  if (followers >= 100_000) return "HR以上";
+  if (followers >= 10_000) return "R以上";
+  if (followers >= 1_000) return "HN以上";
+  return "制限なし";
 }
 
 function blankCardForm(overrides: Partial<CardForm> = {}): CardForm {
   return {
-    name: "無名のカード",
+    name: "",
     image: "",
-    flavor: "ここにカードフレイバーを入力",
+    flavor: "",
     creator: "marin",
     ...overrides
   };
@@ -145,11 +168,32 @@ function BuilderApp() {
   const [publishStatus, setPublishStatus] = useState<"idle" | "publishing" | "ready" | "error">(() =>
     readStoredState().publishedPackId ? "ready" : "idle"
   );
+  const [xAuth, setXAuth] = useState<{ username: string; followers: number } | null>(null);
+  const [packs, setPacks] = useState<PackDef[]>(() => readStoredState().packs);
   const publicUrl = publishedPackId ? `${window.location.origin}/play/${publishedPackId}` : "";
 
   useEffect(() => {
-    localStorage.setItem(storageKey, JSON.stringify({ cards, balance, collection, publishedPackId }));
-  }, [cards, balance, collection, publishedPackId]);
+    function onMessage(event: MessageEvent) {
+      const data = event.data;
+      if (!data || data.type !== "x-auth") return;
+      if (data.error) {
+        setXAuth(null);
+        window.alert(String(data.error));
+        return;
+      }
+      setXAuth({ username: String(data.username ?? ""), followers: Number(data.followers ?? 0) });
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({ cards, balance, collection, packs, publishedPackId }));
+    } catch (error) {
+      console.warn("ローカル保存に失敗しました（保存容量の上限超過の可能性）", error);
+    }
+  }, [cards, balance, collection, packs, publishedPackId]);
 
   useEffect(() => {
     if (cards.length === 0) {
@@ -193,7 +237,10 @@ function BuilderApp() {
         </div>
         <nav>
           <NavLink to="/" end>
-            <ImagePlus size={18} /> パック作成
+            <ImagePlus size={18} /> カード登録
+          </NavLink>
+          <NavLink to="/packs">
+            <Layers size={18} /> パック登録
           </NavLink>
           <NavLink to="/open">
             <Box size={18} /> パック開封
@@ -207,7 +254,8 @@ function BuilderApp() {
       </aside>
       <main>
         <Routes>
-          <Route path="/" element={<CreatePack cards={cards} setCards={setCards} />} />
+          <Route path="/" element={<CreatePack cards={cards} setCards={setCards} xAuth={xAuth} packs={packs} />} />
+          <Route path="/packs" element={<PackRegister packs={packs} setPacks={setPacks} />} />
           <Route
             path="/open"
             element={
@@ -217,6 +265,7 @@ function BuilderApp() {
                 setBalance={setBalance}
                 collection={collection}
                 setCollection={setCollection}
+                packs={packs}
               />
             }
           />
@@ -270,20 +319,130 @@ function PublicPlayApp() {
   );
 }
 
-function CreatePack({ cards, setCards }: { cards: Card[]; setCards: React.Dispatch<React.SetStateAction<Card[]>> }) {
+function PackRegister({
+  packs,
+  setPacks
+}: {
+  packs: PackDef[];
+  setPacks: React.Dispatch<React.SetStateAction<PackDef[]>>;
+}) {
+  const [name, setName] = useState("");
+  const [image, setImage] = useState("");
+  const canAdd = name.trim() !== "" && Boolean(image);
+
+  async function onUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const dataUrl = await downscaleImage(file);
+    setImage(dataUrl);
+    event.target.value = "";
+  }
+
+  function addPack() {
+    if (!canAdd) return;
+    setPacks((current) => [{ id: uid("pack"), name: name.trim(), image }, ...current]);
+    setName("");
+    setImage("");
+  }
+
+  function removePack(id: string) {
+    setPacks((current) => current.filter((pack) => pack.id !== id));
+  }
+
+  return (
+    <section className="screen">
+      <header className="screen-header">
+        <div>
+          <p className="eyebrow">STEP 1</p>
+          <h2>パック登録</h2>
+        </div>
+        <button className="primary-button" type="button" onClick={addPack} disabled={!canAdd}>
+          <Save size={18} />
+          パック登録
+        </button>
+      </header>
+
+      <div className="card-editor">
+        <form className="card-form" onSubmit={(event) => event.preventDefault()}>
+          <label className="wide-field">
+            パック名
+            <input value={name} placeholder="パック名を入力" onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label className="wide-field">
+            パック画像
+            <span className="file-picker">
+              <ImagePlus size={17} />
+              画像を選択
+              <input type="file" accept="image/*" onChange={onUpload} />
+            </span>
+          </label>
+        </form>
+        <div className="template-preview">
+          <div className="pack-art-card">
+            {image ? <img src={image} alt="" /> : <div className="image-placeholder">PACK IMAGE</div>}
+            <strong>{name || "パック名"}</strong>
+          </div>
+        </div>
+      </div>
+
+      {packs.length === 0 ? (
+        <div className="empty-state">
+          <Layers size={42} />
+          <h3>パックを登録</h3>
+          <p>パック名と画像を登録すると、カード登録時にパックをリストから選べるようになります。</p>
+        </div>
+      ) : (
+        <div className="registered-cards">
+          <div className="section-title">
+            <h3>登録済みパック</h3>
+          </div>
+          <div className="pack-gallery">
+            {packs.map((pack) => (
+              <div className="registered-card" key={pack.id}>
+                <div className="pack-art-card">
+                  {pack.image ? <img src={pack.image} alt="" /> : <div className="image-placeholder">PACK IMAGE</div>}
+                  <strong>{pack.name}</strong>
+                </div>
+                <button className="icon-button" type="button" aria-label="削除" onClick={() => removePack(pack.id)}>
+                  <Trash2 size={17} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CreatePack({
+  cards,
+  setCards,
+  xAuth,
+  packs
+}: {
+  cards: Card[];
+  setCards: React.Dispatch<React.SetStateAction<Card[]>>;
+  xAuth: { username: string; followers: number } | null;
+  packs: PackDef[];
+}) {
   const [form, setForm] = useState<CardForm>(() => blankCardForm());
+  const [packId, setPackId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const canSave =
+    Boolean(form.image) &&
+    form.name.trim() !== "" &&
+    form.flavor.trim() !== "" &&
+    packId !== "" &&
+    cards.length < 30 &&
+    !saving;
   const nextCardNo = nextCardNumber(cards);
   const previewCard: Card = { ...form, id: "preview", cardNo: nextCardNo, rarity: "N", value: 0, stars: 0, atk: "???", def: "???" };
 
   async function onUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const image = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
+    const image = await downscaleImage(file);
     setForm((current) => ({ ...current, image }));
     event.target.value = "";
   }
@@ -292,15 +451,49 @@ function CreatePack({ cards, setCards }: { cards: Card[]; setCards: React.Dispat
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function saveCard() {
-    if (!form.image) return;
-    const generated = randomBattleParams();
-    setCards((current) => [{ ...form, ...generated, id: uid("card"), cardNo: nextCardNumber(current), value: values[generated.rarity] }, ...current]);
-    setForm((current) => ({
-      ...blankCardForm({
-        creator: current.creator
-      })
-    }));
+  async function saveCard() {
+    if (!canSave) return;
+    setSaving(true);
+    try {
+      const response = await fetch("/api/cards/generate", { method: "POST", credentials: "include" });
+      if (!response.ok) throw new Error("generate failed");
+      const generated = (await response.json()) as {
+        rarity: Rarity;
+        stars: number;
+        atk: string;
+        def: string;
+        value: number;
+        twitter: string;
+        followers: number;
+        sig: string;
+      };
+      setCards((current) => [
+        {
+          ...form,
+          id: uid("card"),
+          cardNo: nextCardNumber(current),
+          packId,
+          rarity: generated.rarity,
+          stars: generated.stars,
+          atk: generated.atk,
+          def: generated.def,
+          value: generated.value,
+          twitter: generated.twitter,
+          followers: generated.followers,
+          sig: generated.sig
+        },
+        ...current
+      ]);
+      setForm((current) => ({ ...blankCardForm({ creator: current.creator }) }));
+    } catch {
+      window.alert("カードの生成に失敗しました。時間をおいて再度お試しください。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function loginWithX() {
+    window.open("/auth/twitter/login", "xauth", "width=600,height=720");
   }
 
   function removeCard(id: string) {
@@ -314,9 +507,9 @@ function CreatePack({ cards, setCards }: { cards: Card[]; setCards: React.Dispat
           <p className="eyebrow">STEP 1</p>
           <h2>カード登録モード</h2>
         </div>
-        <button className="primary-button" type="button" onClick={saveCard} disabled={!form.image || cards.length >= 30}>
+        <button className="primary-button" type="button" onClick={saveCard} disabled={!canSave}>
           <Save size={18} />
-          カード登録
+          {saving ? "生成中…" : "カード登録"}
         </button>
       </header>
 
@@ -326,11 +519,38 @@ function CreatePack({ cards, setCards }: { cards: Card[]; setCards: React.Dispat
         <Metric icon={<Box size={18} />} label="1パック" value="5枚" />
       </div>
 
+      <div className="x-auth-row">
+        {xAuth ? (
+          <div className="x-auth-badge">
+            <a href={`https://x.com/${xAuth.username}`} target="_blank" rel="noreferrer">
+              @{xAuth.username}
+            </a>
+            <span>フォロワー {xAuth.followers.toLocaleString()}</span>
+            <span className="x-auth-floor">最低レアリティ {floorLabel(xAuth.followers)}</span>
+          </div>
+        ) : (
+          <button className="secondary-button" type="button" onClick={loginWithX}>
+            <BadgeDollarSign size={18} /> Xでログインしてレアリティ強化
+          </button>
+        )}
+      </div>
+
       <div className="card-editor">
         <form className="card-form" onSubmit={(event) => event.preventDefault()}>
+          <label className="wide-field">
+            パック
+            <select value={packId} onChange={(event) => setPackId(event.target.value)} disabled={packs.length === 0}>
+              <option value="">{packs.length === 0 ? "パック未登録（先にパック登録）" : "パックを選択"}</option>
+              {packs.map((pack) => (
+                <option key={pack.id} value={pack.id}>
+                  {pack.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <label>
             カード名
-            <input value={form.name} onChange={(event) => updateForm("name", event.target.value)} />
+            <input value={form.name} placeholder="カード名を入力" onChange={(event) => updateForm("name", event.target.value)} />
           </label>
           <label>
             カード画像
@@ -340,35 +560,13 @@ function CreatePack({ cards, setCards }: { cards: Card[]; setCards: React.Dispat
               <input type="file" accept="image/*" onChange={onUpload} />
             </span>
           </label>
-          <div className="generated-panel concealed wide-field">
-            <div>
-              <span>カードNo.</span>
-              <strong>{nextCardNo}</strong>
-            </div>
-            <div>
-              <span>レアリティ</span>
-              <strong>登録後</strong>
-            </div>
-            <div>
-              <span>☆マーク</span>
-              <strong>登録後</strong>
-            </div>
-            <div>
-              <span>ATK</span>
-              <strong>登録後</strong>
-            </div>
-            <div>
-              <span>DEF</span>
-              <strong>登録後</strong>
-            </div>
-          </div>
           <label>
             作成者
             <input value={form.creator} onChange={(event) => updateForm("creator", event.target.value)} />
           </label>
           <label className="wide-field">
             カードフレイバー
-            <textarea value={form.flavor} onChange={(event) => updateForm("flavor", event.target.value)} rows={4} />
+            <textarea value={form.flavor} placeholder="カードフレイバーを入力" onChange={(event) => updateForm("flavor", event.target.value)} rows={4} />
           </label>
         </form>
         <div className="template-preview">
@@ -409,6 +607,7 @@ function OpenPack({
   setBalance,
   collection,
   setCollection,
+  packs,
   publicOnly = false
 }: {
   cardPool: Card[];
@@ -416,20 +615,41 @@ function OpenPack({
   setBalance: React.Dispatch<React.SetStateAction<number>>;
   collection: PulledCard[];
   setCollection: React.Dispatch<React.SetStateAction<PulledCard[]>>;
+  packs?: PackDef[];
   publicOnly?: boolean;
 }) {
   const [currentPack, setCurrentPack] = useState<PulledCard[]>([]);
   const [position, setPosition] = useState(0);
   const [animation, setAnimation] = useState<"idle" | "normal" | "premium">("idle");
   const [openingPhase, setOpeningPhase] = useState<"idle" | "sealed" | "ripping" | "opened">("idle");
-  const canBuy = cardPool.length > 0 && balance >= packPrice && currentPack.length === 0;
+  const [selectedPackId, setSelectedPackId] = useState("");
+
+  // When packs are supplied (builder mode) the player picks a named pack to open;
+  // otherwise (public play) the whole published set is one pool.
+  const showPackPicker = Array.isArray(packs);
+  const packList = packs ?? [];
+  const selectedPack = packList.find((pack) => pack.id === selectedPackId);
+  const activePool = showPackPicker
+    ? selectedPackId
+      ? cardPool.filter((card) => card.packId === selectedPackId)
+      : []
+    : cardPool;
+
+  useEffect(() => {
+    if (showPackPicker && !selectedPackId && packList.length > 0) {
+      const withCards = packList.find((pack) => cardPool.some((card) => card.packId === pack.id));
+      setSelectedPackId((withCards ?? packList[0]).id);
+    }
+  }, [showPackPicker, selectedPackId, packs, cardPool]);
+
+  const canBuy = activePool.length > 0 && balance >= packPrice && currentPack.length === 0;
   const revealed = currentPack.slice(0, position);
   const isComplete = currentPack.length > 0 && position >= currentPack.length;
   const isPremiumPack = currentPack.some((card) => highRarities.has(card.rarity));
 
   function buyPack() {
     if (!canBuy) return;
-    const pack = pickPack(cardPool);
+    const pack = pickPack(activePool);
     setBalance((current) => current - packPrice);
     setCurrentPack(pack);
     setPosition(0);
@@ -472,32 +692,56 @@ function OpenPack({
           <p className="eyebrow">STEP 2</p>
           <h2>{publicOnly ? "公開パック開封" : "パック開封モード"}</h2>
         </div>
-        <button className="primary-button" type="button" onClick={buyPack} disabled={!canBuy}>
-          <Box size={18} />
-          {packPrice.toLocaleString()}円で購入
-        </button>
+        <div className="opener-actions">
+          {showPackPicker && (
+            <select
+              className="pack-select"
+              value={selectedPackId}
+              onChange={(event) => setSelectedPackId(event.target.value)}
+              disabled={currentPack.length > 0}
+            >
+              <option value="">{packList.length === 0 ? "パック未登録" : "パックを選択"}</option>
+              {packList.map((pack) => (
+                <option key={pack.id} value={pack.id}>
+                  {pack.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <button className="primary-button" type="button" onClick={buyPack} disabled={!canBuy}>
+            <Box size={18} />
+            {packPrice.toLocaleString()}円で購入
+          </button>
+        </div>
       </header>
 
       <div className="opener-layout">
         <div className={`pack-stage ${animation}`}>
-          {cardPool.length === 0 ? (
-            <div className="empty-stage">先にパックを作成してください</div>
+          {activePool.length === 0 && currentPack.length === 0 ? (
+            <div className="empty-stage">
+              {showPackPicker
+                ? packList.length === 0
+                  ? "先にパックを登録してください"
+                  : "このパックにはカードがありません"
+                : "先にパックを作成してください"}
+            </div>
           ) : currentPack.length === 0 ? (
             <button className="pack-art" type="button" onClick={buyPack} disabled={!canBuy}>
-              <span>ORITORE</span>
+              {selectedPack?.image ? <img src={selectedPack.image} alt="" /> : null}
+              <span>{selectedPack?.name ?? "ORITORE"}</span>
               <strong>5 CARDS</strong>
             </button>
           ) : openingPhase !== "opened" ? (
-            <PackRipInteraction premium={isPremiumPack} phase={openingPhase === "ripping" ? "ripping" : "sealed"} onComplete={completePackRip} />
+            <PackRipInteraction premium={isPremiumPack} phase={openingPhase === "ripping" ? "ripping" : "sealed"} onComplete={completePackRip} image={selectedPack?.image} />
           ) : isComplete ? (
             <div className="result-grid">
               {currentPack.map((card) => (
-                <TradingCard key={card.pullId} card={card} total={cardPool.length} compact />
+                <TradingCard key={card.pullId} card={card} total={activePool.length} compact />
               ))}
             </div>
           ) : (
             <div className="single-pull">
-              <TradingCard card={currentPack[position]} total={cardPool.length} />
+              <TradingCard card={currentPack[position]} total={activePool.length} />
               <button className="next-button" type="button" onClick={nextCard}>
                 次へ <ChevronRight size={20} />
               </button>
@@ -530,7 +774,7 @@ function OpenPack({
         </div>
       </div>
 
-      <Collection cards={collection} totalCards={cardPool.length} sellCards={sellCards} />
+      <Collection cards={collection} totalCards={activePool.length} sellCards={sellCards} />
     </section>
   );
 }
@@ -538,19 +782,32 @@ function OpenPack({
 function PackRipInteraction({
   premium,
   phase,
-  onComplete
+  onComplete,
+  image
 }: {
   premium: boolean;
   phase: "sealed" | "ripping";
   onComplete: () => void;
+  image?: string;
 }) {
   const packRef = useRef<HTMLDivElement | null>(null);
   const dragStart = useRef<number | null>(null);
   const [progress, setProgress] = useState(0);
   const [direction, setDirection] = useState<"left" | "right">("right");
+  const [imageAspect, setImageAspect] = useState<number | null>(null);
   const isRipping = phase === "ripping";
   const signedProgress = isRipping ? (direction === "right" ? 1 : -1) : progress;
   const visualProgress = Math.min(1, Math.abs(signedProgress));
+
+  useEffect(() => {
+    if (!image) {
+      setImageAspect(null);
+      return;
+    }
+    const probe = new Image();
+    probe.onload = () => setImageAspect(probe.naturalWidth / probe.naturalHeight);
+    probe.src = image;
+  }, [image]);
 
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
     if (isRipping) return;
@@ -587,7 +844,8 @@ function PackRipInteraction({
           "--rip-offset": `${signedProgress * 48}px`,
           "--rip-offset-inverse": `${signedProgress * -48}px`,
           "--rip-tilt": `${signedProgress * 5}deg`,
-          "--rip-tilt-inverse": `${signedProgress * -5}deg`
+          "--rip-tilt-inverse": `${signedProgress * -5}deg`,
+          aspectRatio: imageAspect ? String(imageAspect) : undefined
         } as React.CSSProperties
       }
       onPointerDown={onPointerDown}
@@ -599,11 +857,25 @@ function PackRipInteraction({
       aria-label="左右にスワイプしてパックを開封"
     >
       <div className="rip-card-peek" />
-      <div className="rip-half rip-half-top">
-        <span>ORITORE</span>
+      <div
+        className="rip-half rip-half-top"
+        style={
+          image
+            ? { backgroundImage: `url(${image})`, backgroundSize: "100% 500%", backgroundPosition: "center top", backgroundRepeat: "no-repeat" }
+            : undefined
+        }
+      >
+        {!image && <span>ORITORE</span>}
       </div>
-      <div className="rip-half rip-half-bottom">
-        <strong>SWIPE TO OPEN</strong>
+      <div
+        className="rip-half rip-half-bottom"
+        style={
+          image
+            ? { backgroundImage: `url(${image})`, backgroundSize: "100% 125%", backgroundPosition: "center bottom", backgroundRepeat: "no-repeat" }
+            : undefined
+        }
+      >
+        {!image && <strong>SWIPE TO OPEN</strong>}
       </div>
       <div className="rip-line" />
       <div className="rip-spark" />
@@ -643,6 +915,19 @@ function PublishBar({ publicUrl, status, cardCount }: { publicUrl: string; statu
 function Collection({ cards, totalCards, sellCards }: { cards: PulledCard[]; totalCards: number; sellCards: (cards: PulledCard[]) => void }) {
   const total = cards.reduce((sum, card) => sum + card.value, 0);
 
+  // Group identical cards (same source card id) so duplicates show once with an ×N count.
+  const groups: { card: PulledCard; count: number }[] = [];
+  const indexById = new Map<string, number>();
+  for (const card of cards) {
+    const idx = indexById.get(card.id);
+    if (idx === undefined) {
+      indexById.set(card.id, groups.length);
+      groups.push({ card, count: 1 });
+    } else {
+      groups[idx].count += 1;
+    }
+  }
+
   return (
     <section className="collection-section">
       <div className="section-title">
@@ -655,8 +940,11 @@ function Collection({ cards, totalCards, sellCards }: { cards: PulledCard[]; tot
         <p className="muted">開封したカードはここに保存されます。</p>
       ) : (
         <div className="collection-grid">
-          {cards.map((card) => (
-            <TradingCard key={card.pullId} card={card} total={totalCards} compact />
+          {groups.map(({ card, count }) => (
+            <div className="collection-card" key={card.id}>
+              <TradingCard card={card} total={totalCards} compact />
+              {count > 1 && <span className="dupe-badge">×{count}</span>}
+            </div>
           ))}
         </div>
       )}
@@ -672,7 +960,7 @@ function TradingCard({ card, total, compact = false, concealStats = false }: { c
         <span className="card-rarity">{concealStats ? "??" : card.rarity}</span>
       </header>
       <div className="card-stars" aria-label={`星${card.stars}`}>
-        {concealStats ? <span>登録後に生成</span> : Array.from({ length: card.stars }, (_, index) => <span key={index}>☆</span>)}
+        {concealStats ? <span>登録後に生成</span> : Array.from({ length: card.stars }, (_, index) => <span key={index}>★</span>)}
       </div>
       <div className="card-image-wrap">
         {card.image ? <img src={card.image} alt="" /> : <div className="image-placeholder">CARD IMAGE</div>}
@@ -687,6 +975,11 @@ function TradingCard({ card, total, compact = false, concealStats = false }: { c
         <span>{card.creator}</span>
         <span>{concealStats ? "登録後" : `${card.value.toLocaleString()}円`}</span>
       </footer>
+      {card.twitter && !concealStats ? (
+        <a className="card-x-link" href={`https://x.com/${card.twitter}`} target="_blank" rel="noreferrer">
+          @{card.twitter}
+        </a>
+      ) : null}
     </article>
   );
 }

@@ -1,0 +1,9 @@
+node_modules
+dist
+frontend/dist
+data
+.git
+.agents
+.codex
+*.log
+npm-debug.log*

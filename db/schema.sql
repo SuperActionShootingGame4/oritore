@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS cards (
   flavor TEXT NOT NULL,
   card_no TEXT NOT NULL,
   creator TEXT NOT NULL,
+  twitter TEXT NOT NULL DEFAULT '',
+  twitter_url TEXT NOT NULL DEFAULT '',
   sale_value INTEGER NOT NULL,
   created_at TEXT NOT NULL
 );

@@ -481,6 +481,43 @@ h3 {
   gap: 14px;
 }
 
+.pack-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 220px);
+  gap: 14px;
+  justify-content: center;
+}
+
+.pack-art-card {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 260px);
+  padding: 14px;
+  border: 1px solid #d8ded9;
+  border-radius: 12px;
+  background: #fffdf8;
+  text-align: center;
+}
+
+.pack-art-card img {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.pack-art-card .image-placeholder {
+  aspect-ratio: 3 / 4;
+}
+
+.pack-art-card strong {
+  color: #17211e;
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .registered-card {
   position: relative;
 }
@@ -546,6 +583,48 @@ h3 {
   background: #fff6ce;
 }
 
+.opener-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pack-select {
+  min-height: 40px;
+  border: 1px solid #cfd8d2;
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: #17211e;
+  background: #fbfaf4;
+  font-weight: 800;
+}
+
+.pack-art {
+  position: relative;
+  overflow: hidden;
+}
+
+.pack-art img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pack-art span,
+.pack-art strong {
+  position: relative;
+  z-index: 1;
+}
+
+.pack-art span {
+  padding: 0 14px;
+  text-align: center;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
+
 .rip-pack {
   --rip-progress: 0;
   --rip-offset: 0px;
@@ -598,7 +677,6 @@ h3 {
 .rip-half {
   left: 0;
   width: 100%;
-  height: 51%;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -611,15 +689,15 @@ h3 {
 
 .rip-half-top {
   top: 0;
+  height: 20%;
   border-radius: 8px 8px 0 0;
-  clip-path: polygon(0 0, 100% 0, 100% 89%, 86% 94%, 72% 88%, 58% 96%, 44% 88%, 30% 95%, 16% 89%, 0 96%);
   transform: translateX(var(--rip-offset)) translateY(calc(var(--rip-progress) * -22px)) rotate(var(--rip-tilt));
 }
 
 .rip-half-bottom {
   bottom: 0;
+  height: 80%;
   border-radius: 0 0 8px 8px;
-  clip-path: polygon(0 8%, 16% 13%, 30% 6%, 44% 14%, 58% 6%, 72% 14%, 86% 8%, 100% 13%, 100% 100%, 0 100%);
   transform: translateX(var(--rip-offset-inverse)) translateY(calc(var(--rip-progress) * 22px)) rotate(var(--rip-tilt-inverse));
 }
 
@@ -641,7 +719,7 @@ h3 {
 }
 
 .rip-line {
-  top: 49%;
+  top: 19%;
   left: 8%;
   width: 84%;
   height: 14px;
@@ -655,7 +733,7 @@ h3 {
 }
 
 .rip-spark {
-  top: 45%;
+  top: 18%;
   left: calc(50% + var(--rip-offset));
   width: 52px;
   height: 52px;
@@ -739,6 +817,30 @@ h3 {
   padding-top: 10px;
 }
 
+.collection-card {
+  position: relative;
+}
+
+.dupe-badge {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  z-index: 3;
+  min-width: 56px;
+  height: 56px;
+  padding: 0 12px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 4px solid #fff;
+  background: #c04b36;
+  color: #fff;
+  font-size: 28px;
+  font-weight: 1000;
+  line-height: 1;
+  box-shadow: 0 8px 20px rgba(26, 35, 31, 0.32);
+}
+
 .trading-card {
   position: relative;
   display: grid;
@@ -753,7 +855,7 @@ h3 {
   border-radius: 8px;
   color: #17211e;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.52), transparent 22%),
+    url(/card_background.png) center / cover no-repeat,
     #f8f5ed;
   box-shadow: 0 14px 32px rgba(26, 35, 31, 0.16);
 }
@@ -784,22 +886,25 @@ h3 {
 .trading-card.SR {
   border-color: #d5a420;
   background:
-    radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.76), transparent 16%),
+    radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.5), transparent 16%),
+    url(/card_background.png) center / cover no-repeat,
     #fff8da;
 }
 
 .trading-card.SSR {
   border-color: #8a62d2;
   background:
-    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.34) 0 4px, transparent 4px 13px),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.28) 0 4px, transparent 4px 13px),
+    url(/card_background.png) center / cover no-repeat,
     #f6efff;
 }
 
 .trading-card.UR {
   border-color: #31a88f;
   background:
-    radial-gradient(circle at 22% 24%, rgba(255, 255, 255, 0.8), transparent 12%),
-    conic-gradient(from 140deg, #ffe66b, #68e1c0, #9a8cff, #ff8fa3, #ffe66b);
+    conic-gradient(from 140deg, rgba(255, 230, 107, 0.5), rgba(104, 225, 192, 0.5), rgba(154, 140, 255, 0.5), rgba(255, 143, 163, 0.5), rgba(255, 230, 107, 0.5)),
+    url(/card_background.png) center / cover no-repeat,
+    #fff8da;
 }
 
 .trading-card.concealed-card {
@@ -1041,4 +1146,52 @@ h3 {
   .publish-bar {
     grid-template-columns: 1fr;
   }
+}
+
+.x-auth-row {
+  margin: 4px 0 12px;
+}
+
+.x-auth-badge {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 16px;
+  border: 1px solid #d7cfc0;
+  border-radius: 12px;
+  background: #fffdf8;
+  font-size: 13px;
+  color: #41514d;
+}
+
+.x-auth-badge a {
+  color: #1d9bf0;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.x-auth-badge a:hover {
+  text-decoration: underline;
+}
+
+.x-auth-floor {
+  color: #17211e;
+  font-weight: 900;
+}
+
+.card-x-link {
+  display: block;
+  margin-top: 6px;
+  color: #1d9bf0;
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-x-link:hover {
+  text-decoration: underline;
 }

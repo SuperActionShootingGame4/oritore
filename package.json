@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
     "dev:frontend": "vite --host 0.0.0.0",
     "build": "tsc -p tsconfig.server.json && vite build",
-    "start": "node dist/server.js",
+    "start": "node --env-file-if-exists=.env dist/server.js",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p frontend/tsconfig.json --noEmit"
   },
   "dependencies": {
